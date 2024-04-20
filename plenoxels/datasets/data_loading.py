@@ -13,8 +13,8 @@ from plenoxels.utils.my_tqdm import tqdm
 
 pil2tensor = torchvision.transforms.ToTensor()
 # increase ulimit -n (number of open files) otherwise parallel loading might fail
-rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
-resource.setrlimit(resource.RLIMIT_NOFILE, (16192, rlimit[1]))
+# rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+# resource.setrlimit(resource.RLIMIT_NOFILE, (16192, rlimit[1]))
 
 
 def _load_phototourism_image(idx: int,

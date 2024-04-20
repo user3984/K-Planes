@@ -4,7 +4,7 @@ config = {
  'device': 'cuda:0',
 
  'data_downsample': 2.0,
- 'data_dirs': ['data/dnerf/data/lego'],
+ 'data_dirs': ['data/dnerf/lego'],
  'contract': False,
  'ndc': False,
  'isg': False,
