@@ -76,6 +76,38 @@ class VideoTrainer(BaseTrainer):
                 rays_o_b = rays_o[b * batch_size: (b + 1) * batch_size].to(self.device)
                 rays_d_b = rays_d[b * batch_size: (b + 1) * batch_size].to(self.device)
                 timestamps_d_b = timestamp.expand(rays_o_b.shape[0]).to(self.device)
+                # print("rays_o_b", rays_o_b.shape)
+                # print("rays_d_b", rays_d_b.shape)
+                # print("timestamps_d_b", timestamps_d_b.shape)
+                outputs = self.model(
+                    rays_o_b, rays_d_b, timestamps=timestamps_d_b, bg_color=bg_color,
+                    near_far=near_far)
+                for k, v in outputs.items():
+                    if "rgb" in k or "depth" in k:
+                        preds[k].append(v.cpu())
+        return {k: torch.cat(v, 0) for k, v in preds.items()}
+
+    def eval_shape_time(self, data, timesteps, **kwargs) -> MutableMapping[str, torch.Tensor]:
+        """
+        Note that here `data` contains a whole image. we need to split it up before tracing
+        for memory constraints.
+        """
+        super().eval_step(data, **kwargs)
+        batch_size = self.eval_batch_size
+        with torch.cuda.amp.autocast(enabled=self.train_fp16), torch.no_grad():
+            rays_o = data["rays_o"]
+            rays_d = data["rays_d"]
+            # timestamp = data["timestamps"]
+            timestamp = torch.FloatTensor(timesteps)
+            near_far = data["near_fars"].to(self.device)
+            bg_color = data["bg_color"]
+            if isinstance(bg_color, torch.Tensor):
+                bg_color = bg_color.to(self.device)
+            preds = defaultdict(list)
+            for b in range(math.ceil(rays_o.shape[0] / batch_size)):
+                rays_o_b = rays_o[b * batch_size: (b + 1) * batch_size].to(self.device)
+                rays_d_b = rays_d[b * batch_size: (b + 1) * batch_size].to(self.device)
+                timestamps_d_b = timestamp.unsqueeze(1).expand(-1, rays_o_b.shape[0]).to(self.device)
                 outputs = self.model(
                     rays_o_b, rays_d_b, timestamps=timestamps_d_b, bg_color=bg_color,
                     near_far=near_far)

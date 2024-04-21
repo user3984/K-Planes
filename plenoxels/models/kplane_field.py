@@ -225,7 +225,11 @@ class KPlaneField(nn.Module):
             pts = normalize_aabb(pts, self.aabb)
         n_rays, n_samples = pts.shape[:2]
         if timestamps is not None:
-            timestamps = timestamps[:, None].expand(-1, n_samples)[..., None]  # [n_rays, n_samples, 1]
+            # timestamps = timestamps[:, None].expand(-1, n_samples)[..., None]  # [n_rays, n_samples, 1]
+            timestamps = timestamps.unsqueeze(-1).expand(*timestamps.shape, n_samples).unsqueeze(-1)  # [n_timestamps, n_rays, n_samples, 1]
+            target_shape = timestamps.shape
+            if len(pts.shape) < len(timestamps.shape):
+                pts = pts.unsqueeze(0).expand(timestamps.shape[0], -1, -1, -1)
             pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
 
         pts = pts.reshape(-1, pts.shape[-1])
@@ -244,7 +248,7 @@ class KPlaneField(nn.Module):
 
         density = self.density_activation(
             density_before_activation.to(pts)
-        ).view(n_rays, n_samples, 1)
+        ).view(*target_shape)
         return density, features
 
     def forward(self,
@@ -252,6 +256,7 @@ class KPlaneField(nn.Module):
                 directions: torch.Tensor,
                 timestamps: Optional[torch.Tensor] = None):
         camera_indices = None
+        shape_time = timestamps is not None and len(timestamps.shape) > 1
         if self.use_appearance_embedding:
             if timestamps is None:
                 raise AttributeError("timestamps (appearance-ids) are not provided.")
@@ -264,6 +269,10 @@ class KPlaneField(nn.Module):
         if not self.linear_decoder:
             directions = get_normalized_directions(directions)
             encoded_directions = self.direction_encoder(directions)
+
+            if shape_time:
+                encoded_directions = encoded_directions.unsqueeze(0).expand(timestamps.shape[0], *encoded_directions.shape)
+                encoded_directions = encoded_directions.reshape(-1, *encoded_directions.shape[2:])
 
         if self.linear_decoder:
             color_features = [features]
@@ -301,6 +310,9 @@ class KPlaneField(nn.Module):
             if not self.linear_decoder:
                 color_features.append(embedded_appearance)
 
+        # print("self.linear_decoder:", self.linear_decoder)
+        # print("self.use_appearance_embedding:", self.use_appearance_embedding)
+        # print("color_features:", [x.shape for x in color_features])
         color_features = torch.cat(color_features, dim=-1)
 
         if self.linear_decoder:
@@ -311,9 +323,14 @@ class KPlaneField(nn.Module):
             basis_values = basis_values.view(color_features.shape[0], 3, -1)  # [batch, 3, color_feature_len]
             rgb = torch.sum(color_features[:, None, :] * basis_values, dim=-1)  # [batch, 3]
             rgb = rgb.to(directions)
-            rgb = torch.sigmoid(rgb).view(n_rays, n_samples, 3)
+            rgb = torch.sigmoid(rgb)#.view(n_rays, n_samples, 3)
         else:
-            rgb = self.color_net(color_features).to(directions).view(n_rays, n_samples, 3)
+            rgb = self.color_net(color_features).to(directions)#.view(n_rays, n_samples, 3)
+
+        if shape_time:
+            density, mask = density.max(dim=0)
+            rgb = rgb.view(-1, n_rays, n_samples, 3)
+            rgb = rgb.gather(0, mask.unsqueeze(0).expand(-1, -1, -1, 3)).squeeze(0)
 
         return {"rgb": rgb, "density": density}
 

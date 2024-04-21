@@ -169,7 +169,7 @@ class LowrankModel(nn.Module):
         """
         rays_o : [batch, 3]
         rays_d : [batch, 3]
-        timestamps : [batch]
+        timestamps : [batch] or [num_timestamps, batch]
         near_far : [batch, 2]
         """
         # Fix shape for near-far
@@ -188,6 +188,8 @@ class LowrankModel(nn.Module):
 
         field_out = self.field(ray_samples.get_positions(), ray_bundle.directions, timestamps)
         rgb, density = field_out["rgb"], field_out["density"]
+        # print("rgb:", rgb.shape)
+        # print("density:", density.shape)
 
         weights = ray_samples.get_weights(density)
         weights_list.append(weights)

@@ -32,7 +32,7 @@ import torch.utils.data
 from plenoxels.runners import video_trainer
 from plenoxels.runners import phototourism_trainer
 from plenoxels.runners import static_trainer
-from plenoxels.utils.create_rendering import render_to_path, decompose_space_time
+from plenoxels.utils.create_rendering import render_to_path, decompose_space_time, render_shape_time
 from plenoxels.utils.parse_args import parse_optfloat
 
 
@@ -94,6 +94,7 @@ def main():
     p.add_argument('--render-only', action='store_true')
     p.add_argument('--validate-only', action='store_true')
     p.add_argument('--spacetime-only', action='store_true')
+    p.add_argument('--render-shapetime', action='store_true')
     p.add_argument('--config-path', type=str, required=True)
     p.add_argument('--log-dir', type=str, default=None)
     p.add_argument('--seed', type=int, default=0)
@@ -127,6 +128,7 @@ def main():
     validate_only = args.validate_only
     render_only = args.render_only
     spacetime_only = args.spacetime_only
+    render_shapetime = args.render_shapetime
     if validate_only and render_only:
         raise ValueError("render_only and validate_only are mutually exclusive.")
     if render_only and spacetime_only:
@@ -135,17 +137,17 @@ def main():
         raise ValueError("validate_only and spacetime_only are mutually exclusive.")
 
     pprint.pprint(config)
-    if validate_only or render_only:
+    if validate_only or render_only or render_shapetime:
         assert args.log_dir is not None and os.path.isdir(args.log_dir)
     else:
         save_config(config)
 
-    data = load_data(model_type, validate_only=validate_only, render_only=render_only or spacetime_only, **config)
+    data = load_data(model_type, validate_only=validate_only, render_only=render_only or spacetime_only or render_shapetime, **config)
     config.update(data)
     trainer = init_trainer(model_type, **config)
     if args.log_dir is not None:
         checkpoint_path = os.path.join(args.log_dir, "model.pth")
-        training_needed = not (validate_only or render_only or spacetime_only)
+        training_needed = not (validate_only or render_only or spacetime_only or render_shapetime)
         trainer.load_model(torch.load(checkpoint_path), training_needed=training_needed)
 
     if validate_only:
@@ -154,6 +156,8 @@ def main():
         render_to_path(trainer, extra_name="")
     elif spacetime_only:
         decompose_space_time(trainer, extra_name="")
+    elif render_shapetime:
+        render_shape_time(trainer, extra_name="")
     else:
         trainer.train()
 

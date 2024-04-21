@@ -1,0 +1,2 @@
+# PYTHONPATH='.' python plenoxels/main.py --config-path plenoxels/configs/final/D-NeRF/dnerf_hybrid.py --log-dir logs/syntheticdynamic/lego_hybrid --render-shapetime
+PYTHONPATH='.' python plenoxels/main.py --config-path plenoxels/configs/final/DyNeRF/flamesteak_hybrid.py --log-dir logs/dynerf_flamesteak --render-shapetime

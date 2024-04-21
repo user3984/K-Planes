@@ -58,7 +58,12 @@ class KPlaneDensityField(nn.Module):
             pts = normalize_aabb(pts, self.aabb)
         n_rays, n_samples = pts.shape[:2]
         if timestamps is not None and self.hexplane:
-            timestamps = timestamps[:, None].expand(-1, n_samples)[..., None]  # [n_rays, n_samples, 1]
+            # print(timestamps.shape)
+            # timestamps = timestamps[:, None].expand(-1, n_samples)[..., None]  # [n_rays, n_samples, 1]
+            timestamps = timestamps.unsqueeze(-1).expand(*timestamps.shape, n_samples).unsqueeze(-1)  # [n_timestamps, n_rays, n_samples, 1]
+            target_shape = timestamps.shape
+            if len(pts.shape) < len(timestamps.shape):
+                pts = pts.unsqueeze(0).expand(timestamps.shape[0], -1, -1, -1)
             pts = torch.cat((pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
 
         pts = pts.reshape(-1, pts.shape[-1])
@@ -67,7 +72,9 @@ class KPlaneDensityField(nn.Module):
         density = self.density_activation(
             self.sigma_net(features).to(pts)
             #features.to(pts)
-        ).view(n_rays, n_samples, 1)
+        ).view(*target_shape)
+        if len(target_shape) == 4:    # shape-time rendering
+            density = density.max(dim=0).values
         return density
 
     def forward(self, pts: torch.Tensor):
