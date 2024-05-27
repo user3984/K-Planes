@@ -251,10 +251,73 @@ class KPlaneField(nn.Module):
         ).view(*target_shape)
         return density, features
 
-    def forward(self,
-                pts: torch.Tensor,
-                directions: torch.Tensor,
-                timestamps: Optional[torch.Tensor] = None):
+    def get_density_cont(self, pts: torch.Tensor):
+        if self.spatial_distortion is not None:
+            pts = self.spatial_distortion(pts)
+            pts = pts / 2  # from [-2, 2] to [-1, 1]
+        else:
+            pts = normalize_aabb(pts, self.aabb)
+        n_rays, n_samples = pts.shape[:2]
+        
+        # 1st iter
+        timestamps = torch.arange(-1.0, 1.0, 1/16).to(pts.device)
+        # pts: [8129, 256, 3]
+        timestamps = timestamps.unsqueeze(-1).expand(-1, n_rays * n_samples).view(-1, n_rays, n_samples, 1)  # [n_timestamps, n_rays, n_samples, 1]
+        pts = pts.unsqueeze(0).expand(timestamps.shape[0], -1, -1, -1)
+        input_pts = pts
+        pts = torch.cat((pts, timestamps), dim=-1)  # [n_timestamps, n_rays, n_samples, 4]
+        pts = pts.reshape(-1, pts.shape[-1])
+        features = interpolate_ms_features(
+            pts, ms_grids=self.grids, grid_dimensions=2, concat_features=self.concat_features, num_levels=None)
+        if self.linear_decoder:
+            density_before_activation = self.sigma_net(features)  # [batch, 1]
+        else:
+            features = self.sigma_net(features)
+            features, density_before_activation = torch.split(
+                features, [self.geo_feat_dim, 1], dim=-1)
+
+        density = self.density_activation(
+            density_before_activation.to(pts)
+        ).view(*timestamps.shape)
+
+        # 2nd iter
+        indices = density.argmax(dim=0, keepdim=True)   # [1, n_rays, n_samples, 1]
+        max_timestamps = timestamps.gather(0, indices)  # [1, n_rays, n_samples, 1]
+        neighbors = torch.arange(-1/16, 1/16, 1/256).to(indices.device)
+        timestamps = neighbors.view(-1, 1, 1, 1) + max_timestamps
+
+        pts = pts.unsqueeze(0).expand(timestamps.shape[0], -1, -1, -1)
+        pts = torch.cat((input_pts, timestamps), dim=-1)  # [n_rays, n_samples, 4]
+
+        pts = pts.reshape(-1, pts.shape[-1])
+        features = interpolate_ms_features(
+            pts, ms_grids=self.grids,  # noqa
+            grid_dimensions=self.grid_config[0]["grid_dimensions"],
+            concat_features=self.concat_features, num_levels=None)
+        if len(features) < 1:
+            features = torch.zeros((0, 1)).to(features.device)
+        if self.linear_decoder:
+            density_before_activation = self.sigma_net(features)  # [batch, 1]
+        else:
+            features = self.sigma_net(features)
+            features, density_before_activation = torch.split(
+                features, [self.geo_feat_dim, 1], dim=-1)
+
+        density = self.density_activation(
+            density_before_activation.to(pts)
+        ).view(*timestamps.shape)
+
+        density, indices = density.max(dim=0)
+        # print(density.shape)
+        # print(features.shape)
+        features = features.reshape(*timestamps.shape[:-1], -1).gather(0, indices.unsqueeze(0).expand(-1, -1, -1, features.shape[-1]))
+        # print(features.shape)
+        return density, features
+
+    def forward_base(self,
+                     pts: torch.Tensor,
+                     directions: torch.Tensor,
+                     timestamps: Optional[torch.Tensor] = None):
         camera_indices = None
         shape_time = timestamps is not None and len(timestamps.shape) > 1
         if self.use_appearance_embedding:
@@ -273,6 +336,8 @@ class KPlaneField(nn.Module):
             if shape_time:
                 encoded_directions = encoded_directions.unsqueeze(0).expand(timestamps.shape[0], *encoded_directions.shape)
                 encoded_directions = encoded_directions.reshape(-1, *encoded_directions.shape[2:])
+                # print("encoded_directions:", encoded_directions.shape)
+                # print("features:", features.shape)
 
         if self.linear_decoder:
             color_features = [features]
@@ -333,6 +398,51 @@ class KPlaneField(nn.Module):
             rgb = rgb.gather(0, mask.unsqueeze(0).expand(-1, -1, -1, 3)).squeeze(0)
 
         return {"rgb": rgb, "density": density}
+
+    def forward_cont(self,
+                     pts: torch.Tensor,
+                     directions: torch.Tensor):
+        density, features = self.get_density_cont(pts)
+        n_rays, n_samples = pts.shape[:2]
+        # directions: [8129, 3]
+
+        directions = directions.view(-1, 1, 3).expand(pts.shape).reshape(-1, 3)
+        if not self.linear_decoder:
+            directions = get_normalized_directions(directions)
+            encoded_directions = self.direction_encoder(directions)
+            # print(encoded_directions.shape)
+            # encoded_directions = encoded_directions.reshape(-1, *encoded_directions.shape[2:])
+
+        if self.linear_decoder:
+            color_features = [features]
+        else:
+            color_features = [encoded_directions, features.view(-1, self.geo_feat_dim)]
+        # print("color_features:", [x.shape for x in color_features])
+        color_features = torch.cat(color_features, dim=-1)
+
+        if self.linear_decoder:
+            if self.use_appearance_embedding:
+                basis_values = self.color_basis(torch.cat([directions, embedded_appearance], dim=-1))
+            else:
+                basis_values = self.color_basis(directions)  # [batch, color_feature_len * 3]
+            basis_values = basis_values.view(color_features.shape[0], 3, -1)  # [batch, 3, color_feature_len]
+            rgb = torch.sum(color_features[:, None, :] * basis_values, dim=-1)  # [batch, 3]
+            rgb = rgb.to(directions)
+            rgb = torch.sigmoid(rgb).view(n_rays, n_samples, 3)
+        else:
+            rgb = self.color_net(color_features).to(directions).view(n_rays, n_samples, 3)
+
+        return {"rgb": rgb, "density": density}
+
+    def forward(self,
+                pts: torch.Tensor,
+                directions: torch.Tensor,
+                timestamps: Optional[torch.Tensor] = None,
+                continuous: Optional[bool] = False):
+        if continuous:
+            return self.forward_cont(pts, directions)
+        else:
+            return self.forward_base(pts, directions, timestamps)
 
     def get_params(self):
         field_params = {k: v for k, v in self.grids.named_parameters(prefix="grids")}

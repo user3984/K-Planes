@@ -87,7 +87,7 @@ class VideoTrainer(BaseTrainer):
                         preds[k].append(v.cpu())
         return {k: torch.cat(v, 0) for k, v in preds.items()}
 
-    def eval_shape_time(self, data, timesteps, **kwargs) -> MutableMapping[str, torch.Tensor]:
+    def eval_shape_time(self, data, timesteps=None, continuous=True, **kwargs) -> MutableMapping[str, torch.Tensor]:
         """
         Note that here `data` contains a whole image. we need to split it up before tracing
         for memory constraints.
@@ -98,7 +98,7 @@ class VideoTrainer(BaseTrainer):
             rays_o = data["rays_o"]
             rays_d = data["rays_d"]
             # timestamp = data["timestamps"]
-            timestamp = torch.FloatTensor(timesteps)
+            timestamp = torch.FloatTensor(timesteps) if not continuous else None
             near_far = data["near_fars"].to(self.device)
             bg_color = data["bg_color"]
             if isinstance(bg_color, torch.Tensor):
@@ -107,10 +107,10 @@ class VideoTrainer(BaseTrainer):
             for b in range(math.ceil(rays_o.shape[0] / batch_size)):
                 rays_o_b = rays_o[b * batch_size: (b + 1) * batch_size].to(self.device)
                 rays_d_b = rays_d[b * batch_size: (b + 1) * batch_size].to(self.device)
-                timestamps_d_b = timestamp.unsqueeze(1).expand(-1, rays_o_b.shape[0]).to(self.device)
+                timestamps_d_b = timestamp.unsqueeze(1).expand(-1, rays_o_b.shape[0]).to(self.device) if not continuous else 1
                 outputs = self.model(
                     rays_o_b, rays_d_b, timestamps=timestamps_d_b, bg_color=bg_color,
-                    near_far=near_far)
+                    near_far=near_far, continuous=continuous)
                 for k, v in outputs.items():
                     if "rgb" in k or "depth" in k:
                         preds[k].append(v.cpu())

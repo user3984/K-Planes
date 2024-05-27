@@ -4,6 +4,7 @@ import logging as log
 from typing import Union, List
 
 import torch
+import numpy as np
 
 from plenoxels.models.lowrank_model import LowrankModel
 from plenoxels.utils.my_tqdm import tqdm
@@ -49,7 +50,7 @@ def render_to_path(trainer: Union[VideoTrainer, StaticTrainer], extra_name: str 
 
 
 @torch.no_grad()
-def render_shape_time(trainer: Union[VideoTrainer, StaticTrainer], timesteps : List[float] = [-0.8, 0.0, 0.8], extra_name: str = "shape_time") -> None:
+def render_shape_time(trainer: Union[VideoTrainer, StaticTrainer], timesteps : List[float] = np.arange(-1., 1., 1/4), continuous: bool = True, extra_name: str = "shape_time") -> None:
     """Render all poses in the `test_dataset`, saving them to file
     Args:
         trainer: The trainer object which is used for rendering
@@ -60,7 +61,7 @@ def render_shape_time(trainer: Union[VideoTrainer, StaticTrainer], timesteps : L
     pb = tqdm(total=100, desc=f"Rendering scene")
     frames = []
     for img_idx, data in enumerate(dataset):
-        ts_render = trainer.eval_shape_time(data, timesteps)
+        ts_render = trainer.eval_shape_time(data, timesteps, continuous=continuous)
 
         if isinstance(dataset.img_h, int):
             img_h, img_w = dataset.img_h, dataset.img_w
